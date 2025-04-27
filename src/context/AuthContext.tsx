@@ -31,6 +31,9 @@ interface DecodedToken {
 }
 
 const decodeToken = (token: string): DecodedToken | null => {
+  // code found at stackoverflow:
+  // https://stackoverflow.com/questions/38552003/how-to-decode-jwt-token-in-javascript-without-using-a-library
+  
   try {
     // split JWT into header | payload | signature
     // and take payload as base64url

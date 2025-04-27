@@ -28,6 +28,30 @@ export default function AccountPage() {
     const [message, setMessage] = useState<{text: string, type: 'success' | 'error'} | null>(null);
 
     const apiUrl = "http://127.0.0.1:8000";
+    
+    // code is the same as in AuthContext.ts
+    const tokenExpired = (token: string | null): boolean => {
+        if (!token) return true;
+        try {
+            // split JWT into header | payload | signature
+            // and take payload as base64url
+            const base64Url = token.split('.')[1];
+            // replace URL-safe chars
+            // - i.e. convert to standard base64 for easy decoding
+            const base64 = base64Url.replace(/-/g, "+").replace(/_/g, '/');
+            // decode to a json string
+            const jsonPayload = decodeURIComponent(
+                atob(base64) // decode into binary string
+                .split('') // split into characters
+                .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)) // convert to %-encoded hex
+                .join('') // combine into URI endoded string
+            );
+            const decoded = JSON.parse(jsonPayload);
+            return decoded.exp && (Date.now() >= decoded.exp * 1000);
+        } catch {
+            return true;
+        }
+    };
 
     useEffect(() => {
         if (isAuthenticated && userId) {
@@ -39,8 +63,9 @@ export default function AccountPage() {
         try {
             setLoading(true);
             const token = localStorage.getItem("token");
-            if (!token) {
-                throw new Error("No auth token");
+            if (!token || tokenExpired(token)) {
+                logout();
+                return;
             }
 
             const response = await fetch(`${apiUrl}/users/${userId}`, {
@@ -49,6 +74,12 @@ export default function AccountPage() {
                   'Content-Type': 'application/json'
                 },
             });
+
+            // unauthorised 
+            if (response.status === 401)  {
+                logout();
+                return;
+            }
 
             if (!response.ok) {
                 throw new Error("Failed to fetch user data");
@@ -65,6 +96,7 @@ export default function AccountPage() {
         } catch (error) {
             console.error("Error fetching user data:", error);
             setMessage({text: "Failed to load user data", type: "error"});
+            logout();
         } finally {
             setLoading(false);
         }

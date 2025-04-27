@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Text, Enum
+from datetime import datetime, timezone
+from sqlalchemy import JSON, Column, DateTime, Integer, String, ForeignKey, Text, Enum
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
@@ -58,5 +59,11 @@ class Pantry(Base):
     user = relationship("User", back_populates="pantry")
     ingredient = relationship("Ingredient", back_populates="pantry_entries")
 
+class RecipeCache(Base):
+    __tablename__ = "recipe_cache"
 
+    id = Column(String, primary_key=True)
+    data = Column(JSON)
+    created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    expires_at = Column(DateTime)
     

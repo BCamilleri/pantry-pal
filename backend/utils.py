@@ -15,8 +15,8 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # HMAC-SHA256 algorithm for encryption
 ALGORITHM = "HS256"
 
-# token expiry time
-ACCESS_TOKEN_EXPIRE_MINS = 30
+# token expiry time (6 hours = 360 mins)
+ACCESS_TOKEN_EXPIRE_MINS = 360
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

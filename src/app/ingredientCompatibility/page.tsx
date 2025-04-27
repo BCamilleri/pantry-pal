@@ -138,7 +138,7 @@ export default function IngredientCompatibilityPage() {
     return (
         <div className="flex flex-col gap-3 px-10 py-5">
             <h1 className='text-3xl font-bold text-darkgrey text-center mb-2'>Ingredient Compatibility</h1>
-                <div className="flex-1 border-3 border-black p-6 border-[3px] rounded-lg bg-white">
+                <div className="flex-1 border-3 border-black p-6 border-[2px] rounded-lg bg-white">
                         <div className='flex justify-between mb-5'>
                             <h2 className="text-xl font-semibold">Your Pantry</h2>
                             <Button onClick={refreshCompatibility} className='px-4 py-2'>Refresh Compatibility</Button>
@@ -156,7 +156,7 @@ export default function IngredientCompatibilityPage() {
                             </div>
                         </div>
                     </div>
-            <div className="flex-col bg-white text-black p-4 border-[3px] border-black rounded-xl">
+            <div className="flex-col text-black p-4 border-[2px] border-black rounded-xl bg-white">
                 <h2 className="text-xl font-semibold mb-4">Your Personalised Ingredient Match-ups</h2>
                     {error && (
                         <div className='mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded'>
@@ -166,10 +166,10 @@ export default function IngredientCompatibilityPage() {
                     {compatibleGroups.length === 0 ? (
                         <p className='text-darkgrey'>No custom matchups found for your ingredients. Try adding more ingredients to your pantry.</p>
                     ) : (
-                        <div className='grid grod-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
+                        <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'>
                             {compatibleGroups.map((group, index) => (
-                                <div key={index} className="m-2 p-4 border border-black border-[2px] rounded-xl">
-                                    <h3 className='font-medium mb-2'>Group {index + 1} (Score: {group.score})</h3>
+                                <div key={index} className="m-2 p-4 border border-black border-[1px] rounded-xl">
+                                    <h3 className='font-medium mb-2'>Group {index + 1}</h3>
                                     <ul className='list-disc pl-5'>
                                         {group.ingredients.map((ingredient, idx) => (
                                             <li key={idx}>{ingredient}</li>

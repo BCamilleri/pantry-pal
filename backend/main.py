@@ -1,4 +1,6 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
+import hashlib
 import random
 from fastapi import FastAPI, Depends, HTTPException, Query, status, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,12 +9,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.decorator import cache
+import numpy as np
 from redis import asyncio as aioredis
 import httpx
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from database import engine, Base, get_db
-from models import User, Recipe, Ingredient, Pantry, RecipeIngredient, UserRole
+from models import RecipeCache, User, Recipe, Ingredient, Pantry, RecipeIngredient, UserRole
 from utils import create_access_token, decode_access_token, hash_password, verify_password
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List, Dict, Any, AsyncIterator
@@ -20,6 +23,7 @@ from contextlib import asynccontextmanager
 from enum import Enum
 import pickle
 import networkx as nx
+from networkx.algorithms import community
 from itertools import combinations
 import os
 import re
@@ -523,7 +527,6 @@ def extract_main_ingredient(ingredient):
         r'.*chicken$': 'chicken',
         r'.*beef$': 'beef',
         r'.*pork$': 'pork',
-        r'.*peas$': 'peas',
         r'.*cider$': 'cider',
         r'.*onion$': 'onion'
     }
@@ -589,13 +592,26 @@ def extract_main_ingredient(ingredient):
             break
     return ingredient
 
+# calculate threshold dynamically based on PMI score distribution
+def calculate_dynamic_pmi_threshold(pmi: dict, ingredients: list) -> float:
+    relevant_scores = []
+    for a, b in combinations(ingredients, 2):
+        key = tuple(sorted((a, b)))
+        if key in pmi:
+            relevant_scores.append(pmi[key])
+    if not relevant_scores:
+        return 0.0 # default threshold
+    
+    # at least 0.3 and 25th percentile
+    return max(0.0, np.percentile(relevant_scores, 25))
+
+
 @app.post("/compatibility/")
 def get_ingredient_compatibility(
     ingredient_list: IngredientList,
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme)
 ):
-    PMI_THRESHOLD = 1.0
     MIN_CLIQUE_SIZE = 2
     MAX_CLIQUE_SIZE = 15
 
@@ -648,6 +664,10 @@ def get_ingredient_compatibility(
     G_full = data['graph']
 
     pantry = [ing for ing in ingredients if ing in G_full]
+    print(pantry)
+
+    PMI_THRESHOLD = calculate_dynamic_pmi_threshold(pmi, pantry)
+    print(f"Using dynamic threshold: {PMI_THRESHOLD}")
 
     subgraph = nx.Graph()
     for a, b in combinations(pantry, 2):
@@ -657,8 +677,11 @@ def get_ingredient_compatibility(
     
     cliques = list(nx.find_cliques(subgraph))
 
+    # testing community detection over cliques
+    communities = list(community.greedy_modularity_communities(subgraph))
+
     results = []
-    for clique in cliques:
+    for clique in communities:
         if len(cliques) < MIN_CLIQUE_SIZE or len(cliques) > MAX_CLIQUE_SIZE:
             continue
         total = 0
@@ -716,6 +739,35 @@ def bulk_create_ingredients(
         "created": created,
         "skipped": skipped,
         "message": f"Added {len(created)} new ingredients."
+    }
+
+# =================== Cache =================== #
+@app.delete("/cache/recipes")
+def clear_recipe_cache(db: Session = Depends(get_db), admin: User = Depends(is_admin)):
+    try:
+        # clear redis cache
+        redis = FastAPICache.get_backend()
+        if redis:
+            asyncio.run(redis.clear(namespace="fastapi-cache:recipes"))
+
+        db.query(RecipeCache).delete()
+        db.commit()
+
+        return {"message": "Recipe cache cleared successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+    
+@app.get("/cache/stats")
+def get_cache_stats(db: Session = Depends(get_db), admin: User = Depends(is_admin)):
+    cache_count = db.query(RecipeCache.count())
+    oldest = db.query(RecipeCache).order_by(RecipeCache.created_at).first()
+    return {
+        "cache_entries": cache_count,
+        "oldest_entry": oldest.created_at if oldest else None,
     }
 
 # ============ MealDB fetch recipes ============ #
@@ -828,12 +880,40 @@ async def get_recipe_details(
         )
     
 @app.get("/api/recipes/multi-ingredient")
+@cache(expire=500)
 async def get_recipes_by_multiple_ingredients(
     ingredients: str = Query(..., description="Comma separated list of ingredients"),
     page: int = Query(1, ge=1),
     per_page: int = Query(6, ge=1, le=20),
-    skip_fetch: bool = Query(False)
+    db: Session = Depends(get_db)
 ):
+    cache_key = hashlib.md5(f"recipes_{ingredients}".encode()).hexdigest()
+    
+    # first, redis cache handled by @cacge decorator
+    # then try database cache
+    db_cache = db.query(RecipeCache).filter(
+        RecipeCache.id == cache_key,
+        RecipeCache.expires_at > datetime.now(timezone.utc)
+    ).first()
+
+    # if cache hit, implemenent pagination on cached data
+    if db_cache:
+        cached_data = db_cache.data
+        total = len(cached_data["meals"])
+        start = (page - 1) * per_page
+        end = start + per_page
+        paginated = cached_data["meals"][start:end]
+
+        return {
+            "meals": paginated,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "has_more": end < total,
+            "cached": True
+        }
+    
+    # if not in cache, proceed with API calls
     MEALDB_API_KEY = os.getenv('MEALDB_API_KEY')
     if not MEALDB_API_KEY: 
         raise HTTPException(
@@ -849,20 +929,24 @@ async def get_recipes_by_multiple_ingredients(
             # Get all recipes that match ANY of the ingredients
             all_recipes = []
             for ingredient in ingredient_list:
-                response = await client.get(
-                    f"{MEALDB_BASE_URL}/filter.php",
-                    params={"i": ingredient},
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                data = response.json()
-                if data.get("meals"):
-                    all_recipes.extend(data["meals"])
+                try:
+                    response = await client.get(
+                        f"{MEALDB_BASE_URL}/filter.php",
+                        params={"i": ingredient},
+                        timeout=10.0
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    if data.get("meals"):
+                        all_recipes.extend(data["meals"])
+                    await asyncio.sleep(0.05)
+                except Exception as e:
+                    print(f"Error fetching recipes for {ingredient}: {e}")
+                    continue
+
 
             # remove duplicates
-            print(f"all_recipes size: {len(all_recipes)}")
             unique_recipes = {recipe["idMeal"]: recipe for recipe in all_recipes}.values()
-            print(f"unique recipes size: {len(unique_recipes)}")
             
             # shuffle and trim recipes to get a random selection
             unique_recipes = list(unique_recipes)
@@ -871,29 +955,53 @@ async def get_recipes_by_multiple_ingredients(
 
             filtered_recipes = []
             for recipe in unique_recipes:
-                details = await client.get(
-                    f"{MEALDB_BASE_URL}/lookup.php",
-                    params={"i": recipe["idMeal"]},
-                    timeout=10.0
-                )
-                details.raise_for_status()
-                meal_data = details.json()
-                if meal_data.get("meals"):
-                    meal = meal_data["meals"][0]
-                    recipe_ingredients = set()
-                    for i in range(1, 21):
-                        ingredient = meal.get(f"strIngredient{i}")
-                        if ingredient and ingredient.strip():
-                            recipe_ingredients.add(ingredient.lower().strip())
-                    matched = sum(1 for ing in ingredient_list if ing.lower() in recipe_ingredients)
-                    if matched > 0:
-                        filtered_recipes.append({
-                            **meal,
-                            "matched_ingredients": matched,
-                            "total_ingredients": len(recipe_ingredients)
-                        })
+                try:
+                    details = await client.get(
+                        f"{MEALDB_BASE_URL}/lookup.php",
+                        params={"i": recipe["idMeal"]},
+                        timeout=10.0
+                    )
+                    details.raise_for_status()
+                    meal_data = details.json()
+                    if meal_data.get("meals"):
+                        meal = meal_data["meals"][0]
+                        recipe_ingredients = set()
+                        for i in range(1, 21):
+                            ingredient = meal.get(f"strIngredient{i}")
+                            if ingredient and ingredient.strip():
+                                recipe_ingredients.add(ingredient.lower().strip())
+                        matched = sum(1 for ing in ingredient_list if ing.lower() in recipe_ingredients)
+                        if matched > 0:
+                            filtered_recipes.append({
+                                **meal,
+                                "matched_ingredients": matched,
+                                "total_ingredients": len(recipe_ingredients)
+                            })
+                    await asyncio.sleep(0.01)
+                except Exception as e:
+                    print(f"Error fetching details for {recipe['idMeal']}: {e}")
+                    continue
 
             filtered_recipes.sort(key=lambda x: (-x["matched_ingredients"], x["total_ingredients"]))
+
+            # store in database cache
+            cache_data = {
+                "meals": filtered_recipes,
+                "total": len(filtered_recipes),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+
+            db_cache = RecipeCache(
+                id=cache_key,
+                data=cache_data,
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=24)
+            )
+
+            db.add(db_cache)
+            try:
+                db.commit()
+            except:
+                db.rollback()
 
             # Paginate
             total = len(filtered_recipes)
