@@ -5,7 +5,7 @@ from alembic import context
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from backend.models import Base
 from backend.database import SQLALCHEMY_DATABASE_URL
@@ -52,3 +52,5 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
+
+print(SQLALCHEMY_DATABASE_URL)

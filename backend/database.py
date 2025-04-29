@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 # SQLite db file path
 DB_URL = "sqlite:///./local_database.db"
-SQLALCHEMY_DATABASE_URL = "sqlite:///./local_database.db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///backend/local_database.db"
 
 # Create db engine
 engine = create_engine(DB_URL, connect_args={"check_same_thread": False})

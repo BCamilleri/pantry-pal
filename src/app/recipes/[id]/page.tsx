@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useParams, useRouter } from "next/navigation"
 import { useAuth } from '@/context/AuthContext'
 import { usePantryService } from "@/services/pantryService"
+import { CommentSection } from "@/components/commentSection"
 
 const MEALDB_URL = "https://www.themealdb.com/api/json/v2/" + process.env.NEXT_PUBLIC_MEAL_DB_API_KEY;
 
@@ -220,6 +221,7 @@ export default function RecipePage() {
                     )}
                 </div>
             </div>
+            <CommentSection recipeId={params.id as string} />
         </div>
     );
 

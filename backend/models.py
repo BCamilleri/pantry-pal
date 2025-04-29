@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import JSON, Column, DateTime, Integer, String, ForeignKey, Text, Enum
+from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String, ForeignKey, Text, Enum
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
@@ -66,4 +66,19 @@ class RecipeCache(Base):
     data = Column(JSON)
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
     expires_at = Column(DateTime)
+
+class Comment(Base):
+    __tablename__ = "comments"
     
+    id = Column(Integer, primary_key=True, index=True)
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.now(timezone.utc))
+    updated_at = Column(DateTime, onupdate=datetime.now(timezone.utc))
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    recipe_id = Column(String, nullable=False)
+    parent_id = Column(Integer, ForeignKey("comments.id"), nullable=True)
+    is_deleted = Column(Boolean, default=False) # for soft delete
+
+    user = relationship("User")
+    replies = relationship("Comment", back_populates="parent", cascade="all, delete-orphan")
+    parent = relationship("Comment", back_populates="replies", remote_side=[id])

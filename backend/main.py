@@ -12,10 +12,10 @@ from fastapi_cache.decorator import cache
 import numpy as np
 from redis import asyncio as aioredis
 import httpx
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
 from database import engine, Base, get_db
-from models import RecipeCache, User, Recipe, Ingredient, Pantry, RecipeIngredient, UserRole
+from models import RecipeCache, User, Recipe, Ingredient, Pantry, RecipeIngredient, UserRole, Comment
 from utils import create_access_token, decode_access_token, hash_password, verify_password
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List, Dict, Any, AsyncIterator
@@ -106,6 +106,35 @@ class BulkIngredientCreate(BaseModel):
 
 class IngredientList(BaseModel):
     ingredients: List[str]
+
+class CommentBase(BaseModel):
+    text: str
+    recipe_id: str
+
+class CommentCreate(CommentBase):
+    parent_id: Optional[int] = None # for replies
+
+class CommentUpdate(BaseModel):
+    text: str
+
+class CommentResponse(BaseModel):
+    id: int
+    text: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    user_id: int
+    username: str
+    recipe_id: str
+    parent_id: Optional[int]
+    is_deleted: bool = False
+    replies: List["CommentResponse"] = []
+
+    # so i don't have to manualy convert ORM objects 
+    class Config:
+        from_attributes = True
+
+# rebuild schema as comments have recursive structure
+CommentResponse.model_rebuild()
 
 # Check if user is admin for locked functions
 async def is_admin(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
@@ -646,7 +675,7 @@ def get_ingredient_compatibility(
     
     # load compatibility data 
     try:
-        with open('../src/data/compatibility_graph.pkl', 'rb') as f:
+        with open('../src/data/compatibility_graph_new.pkl', 'rb') as f:
             data = pickle.load(f)
     except FileNotFoundError:
         raise HTTPException(
@@ -741,7 +770,7 @@ def bulk_create_ingredients(
         "message": f"Added {len(created)} new ingredients."
     }
 
-# =================== Cache =================== #
+# =================== Cache endpoints =================== #
 @app.delete("/cache/recipes")
 def clear_recipe_cache(db: Session = Depends(get_db), admin: User = Depends(is_admin)):
     try:
@@ -770,7 +799,7 @@ def get_cache_stats(db: Session = Depends(get_db), admin: User = Depends(is_admi
         "oldest_entry": oldest.created_at if oldest else None,
     }
 
-# ============ MealDB fetch recipes ============ #
+# ============ MealDB fetch recipe endpoints ============ #
 @app.get("/api/recipes")
 async def get_mealdb_recipes(
     ingredient: str,
@@ -1021,6 +1050,249 @@ async def get_recipes_by_multiple_ingredients(
             detail="MealDB API error"
         )
     except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+    
+# ============ Comment API endpoints ============ #
+@app.post("/comments", response_model=CommentResponse)
+def create_comment(
+    comment: CommentCreate,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        # verify user
+        user_data = decode_access_token(token)
+        if not user_data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        # if reply, check parent comment is valid
+        parent_id = None
+        if hasattr(comment, 'parent_id'): 
+            parent_id = comment.parent_id
+            if parent_id:
+                parent_comment = db.query(Comment).filter(Comment.id == parent_id).first()
+                if not parent_comment:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Parent comment not found"
+                    )
+                if parent_comment.recipe_id != comment.recipe_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Comment replies must be on the same recipe"
+                    )
+            
+        # Create new comment
+        db_comment = Comment(
+            text=comment.text,
+            user_id=user_data["user_id"],
+            recipe_id=comment.recipe_id,
+            parent_id=comment.parent_id
+        )
+        db.add(db_comment)
+        db.commit()
+        db.refresh(db_comment)
+
+        # add username in response to avoid multiple api requests
+        user = db.query(User).filter(User.id == user_data["user_id"]).first()
+        if not user: 
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        response_data = {
+            "id": db_comment.id,
+            "text": db_comment.text,
+            "created_at": db_comment.created_at,
+            "updated_at": db_comment.updated_at,
+            "user_id": db_comment.user_id,
+            "recipe_id": db_comment.recipe_id,
+            "parent_id": db_comment.parent_id,
+            "username": user.username,
+            "is_deleted": False,
+            "replies": []
+        }
+
+        return response_data
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating comment: {str(e)}"
+        )
+    
+@app.get("/comments/{recipe_id}", response_model=List[CommentResponse])
+def get_comments_by_recipe(
+    recipe_id: str,
+    db: Session = Depends(get_db)
+):
+    # get all top level comments
+    comments = db.query(Comment).options(
+        joinedload(Comment.user),
+        joinedload(Comment.replies).joinedload(Comment.user)
+    ).filter(
+        Comment.recipe_id == recipe_id,
+        Comment.parent_id == None
+    ).order_by(Comment.created_at.desc()).all()
+
+    # convert to tree for reply view recursively
+    def construct_comment_tree(comment):
+        response = {
+            "id": comment.id,
+            "text": "[deleted]" if comment.is_deleted else comment.text,
+            "created_at": comment.created_at,
+            "updated_at": comment.updated_at,
+            "user_id": comment.user_id if comment.user_id else 0,
+            "recipe_id": comment.recipe_id,
+            "parent_id": comment.parent_id,
+            "username": "[deleted]" if comment.is_deleted else comment.user.username,
+            "is_deleted": comment.is_deleted,
+            "replies": [construct_comment_tree(reply) for reply in comment.replies]
+        }
+        return CommentResponse(**response)
+
+    return [construct_comment_tree(comment) for comment in comments]
+
+@app.put("/comments/{comment_id}", response_model=CommentResponse)
+def update_comment(
+    comment_id: int,
+    comment_update: CommentUpdate,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        # verify user
+        user_data = decode_access_token(token)
+        if not user_data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        # find comment
+        db_comment = db.query(Comment).filter(Comment.id == comment_id).first()
+        if not db_comment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Comment not found"
+            )
+        
+        # verify owner
+        if db_comment.user_id != user_data["user_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorised to update this comment"
+            )
+        
+        # update comment
+        db_comment.text = comment_update.text
+        db_comment.updated_at = datetime.now(timezone.utc)
+
+        db.commit()
+        db.refresh(db_comment)
+
+        user = db.query(User).filter(User.id == user_data["user_id"]).first()
+        db_comment.username = user.username
+
+        return db_comment
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error updating comment"
+        )
+    
+# HARD delete - i.e. permanently remove from db along with all replies
+@app.delete("/comments/hard/{comment_id}")
+def hard_delete_comment(
+    comment_id: int,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+): 
+        try:
+            # verify user
+            user_data = decode_access_token(token)
+            if not user_data:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid token"
+                )
+            
+            # find comment
+            db_comment = db.query(Comment).filter(Comment.id == comment_id).first()
+            if not db_comment:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Comment not found"
+                )
+            
+            # verify owner OR admin
+            user = db.query(User).filter(User.id == user_data["user_id"]).first()
+            if db_comment.user_id != user_data["user_id"] and user.role != UserRole.ADMIN:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorised to delete this comment"
+                )
+            
+            # delete comment
+            db.query(Comment).filter((Comment.id == comment_id) | (Comment.parent_id == comment_id)).delete()
+            db.commit()
+            return {"message": "Comment and replies permanently deleted"}
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e) 
+            )
+        
+# SOFT delete (only obscure info and keep replies)
+@app.delete("/comments/soft/{comment_id}")
+def soft_delete_comment(
+    comment_id: int,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        # verify user
+        user_data = decode_access_token(token)
+        if not user_data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+
+        # fetch comment
+        db_comment = db.query(Comment).filter(Comment.id == comment_id).first()
+        if not db_comment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Comment not found"
+            )
+        
+        # verify user
+        user = db.query(User).filter(User.id == user_data["user_id"]).first()
+        if db_comment.user != user_data["user_id"] and user.role != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorised to delete this comment"
+            )
+        
+        # soft delete comment
+        db_comment.text = "[deleted]"
+        db_comment.is_deleted = True
+
+        db.commit()
+
+        return {"message": "Comment content obscured"}
+    except Exception as e:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
