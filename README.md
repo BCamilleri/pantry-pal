@@ -1,3 +1,36 @@
+# PantryPal
+
+This project has:
+**Frontend**: Next.js (React)
+**Backend**: FastAPI (Python 3.12)
+**Database**: SQLite3
+
+## Backend setup (FastAPI)
+1. Navigate to backend directory in terminal
+(Recommended) Create a virtual environment
+2. Install dependencies:
+    pip install -r requirements.txt
+3. Create a '.env' file in the backend/ folder with the following lines:
+    SECRET_KEY = "abc123"
+    MEALDB_API_KEY = "65232507"
+4. Run the FastAPI server: 
+    uvicorn main:app --reload
+
+Server will be available at http://127.0.0.1:8000
+
+## Frontend setup (Next.js)
+1. Navigate to pantrypal root directory in a second terminal window
+2. Install dependencies 
+    npm install
+3. Create a '.env.local' file in the root folder with the following lines:
+    NEXT_PUBLIC_MEAL_DB_API_KEY = "65232507"
+4. Start development server:
+    npm run dev
+
+
+## Environment Variables
+These files are ignored by git so please ensure you create them manually before running the project, else core features will not work!
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
