@@ -143,8 +143,8 @@ export function CommentSection({ recipeId }: { recipeId: string }) {
         return (
             <div
             key={comment.id}
-            className={`mt-4 ${depth > 0 ? 'ml-8 border-l-2 border-darkgrey pl-4' : ''}`}
-            style={{marginLeft: `${depth * 10}px`}}
+            className={`mt-4 ${depth > 0 ? 'ml-8 border-darkgrey pl-4' : ''}`}
+            style={{marginLeft: `${depth * 25}px`}}
             >
                 <div className='flex items-start gap-3'>
                     {/* Avatar - temp image for now, or X if account deleted */}
@@ -223,7 +223,7 @@ export function CommentSection({ recipeId }: { recipeId: string }) {
     }
 
     return (
-        <div className='mt-8'>
+        <div className='border-black border-[1px] rounded-lg mt-8 p-4 shadow-md'>
             <h2 className='text-2xl font-bold mb-4'>Comments</h2>
             {error && (
                 <div className='mb-4 p-2 text-red-500 bg-red-50 rounded'>
@@ -232,16 +232,19 @@ export function CommentSection({ recipeId }: { recipeId: string }) {
             )}
             {isAuthenticated && (
                 <form onSubmit={(e) => handleSubmit(e, false)} className='mb-6'>
-                    <textarea 
-                      value={newComment}
-                      onChange={(e) => {
-                        if (!replyingTo) {
-                            setNewComment(e.target.value)
-                        }
-                      }}
-                      placeholder='Comment...'
-                    />
-                    <button type='submit' className='mt-2'>Post</button>
+                    <div className='flex justify-between'>
+                        <textarea 
+                        className='rounded-lg p-3 border-black border-[2px] w-full mr-6'
+                        value={newComment}
+                        onChange={(e) => {
+                            if (!replyingTo) {
+                                setNewComment(e.target.value)
+                            }
+                        }}
+                        placeholder='Comment...'
+                        />
+                        <button type='submit' className='ml-2 w-1/4 bg-darkgrey text-white font-bold text-xl px-4 py-2 rounded-xl hover:bg-gradient-to-r hover:from-myorange hover:to-deepred'>Post</button>
+                    </div>
                 </form>
             )}
             {comments.length === 0 ? (

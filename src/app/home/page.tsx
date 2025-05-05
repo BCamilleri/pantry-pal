@@ -1,9 +1,55 @@
+"use client"
+
 import Link from "next/link";
 import Image from "next/image"
 import { FiSearch, FiPlus, FiStar } from "react-icons/fi"
+import { useEffect, useState } from "react";
 
+interface Meal {
+    idMeal: string;
+    strMeal: string;
+    strMealThumb: string;
+    strInstructions?: string;
+    [key: string]: any;
+}
+
+const FALLBACK_RECIPE: Meal = {
+    idMeal: "1",
+    strMeal: "Rigatoni with Sausage Ragu",
+    strMealThumb: "/tempHighlightedRecipeImage.jpg"
+};
 
 export default function HomePage() {
+
+    const [randomRecipe, setRandomRecipe] = useState<Meal | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const fetchRandomRecipe = async () => {
+            try {
+                setLoading(true);
+                const url = `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/recipes/random`;
+                console.log(url);
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error("Failed to fetch random recipe");
+                }
+                const data = await response.json();
+                console.log(data);
+                setRandomRecipe(data.meal);
+            } catch (error) {
+                console.error(error)
+                setRandomRecipe(FALLBACK_RECIPE);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        fetchRandomRecipe();
+    }, []);
+
+    const displayRecipe = randomRecipe || FALLBACK_RECIPE;
  
     return (
         <div className="p-6">
@@ -37,10 +83,30 @@ export default function HomePage() {
                 </div>
     
                 {/* Highlighted Recipe Panel */}
-                <div className="flex-1 border-black border-[3px] p-6 rounded-lg text-center mx-auto bg-white">
+                <div className="w-full flex-1 border-black border-[3px] p-6 rounded-lg text-center mx-auto bg-white">
                     <h2 className="m-2 font-bold text-black text-4xl">Highlighted Recipe</h2>
-                    <Image className="mx-auto shadow shadow-gray-800" src="/tempHighlightedRecipeImage.jpg" alt="Highlighted Recipe" width={500} height={500}/>
-                    <p className="p-5 m-5 font-bold bg-darkgrey rounded-lg text-lg text-white shadow shadow-gray-800 shadow-sm">Rigatoni with Sausage Ragu</p>
+                    {loading ? (
+                        <div className="flex justify-center items-center h-64">
+                            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-myblue"></div>
+                        </div>
+                    ) : (
+                        <>
+                            <img
+                              className="mx-auto shadow shadow-gray-800"
+                              src={displayRecipe.strMealThumb}
+                              alt={displayRecipe.strMeal}
+                              width={400}
+                            />
+                            <p className="text-2xl p-5 m-5 font-bold bg-darkgrey rounded-lg text-white shadow shadow-gray-800 shadow-sm">
+                                {displayRecipe.strMeal}
+                            </p>
+                            {displayRecipe.idMeal !== FALLBACK_RECIPE.idMeal && (
+                                <Link
+                                href={`/recipes/${displayRecipe.idMeal}`} key={displayRecipe.idMeal}
+                                >View Recipe Details</Link>
+                            )}
+                        </>
+                    )}
                 </div>
             </div>
         </div>

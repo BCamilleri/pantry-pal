@@ -851,6 +851,50 @@ def get_cache_stats(db: Session = Depends(get_db), admin: User = Depends(is_admi
     }
 
 # ============ MealDB fetch recipe endpoints ============ #
+@app.get("/api/recipes/random")
+async def get_random_recipe():
+    print("IN ENDPOINT")
+    MEALDB_API_KEY = os.getenv('MEALDB_API_KEY')
+    if not MEALDB_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="MealDB API key not configured"
+        )
+    
+    MEALDB_BASE_URL = f"https://www.themealdb.com/api/json/v2/{MEALDB_API_KEY}"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{MEALDB_BASE_URL}/random.php",
+                timeout=10.0
+            )
+
+            response.raise_for_status()
+            data = response.json()
+
+            if not data.get("meals"):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No random recipe found"
+                )
+            
+            return {
+                "meal": data["meals"][0],
+                "cached": False
+            }
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail="MealDB API error"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
 @app.get("/api/recipes")
 async def get_mealdb_recipes(
     ingredient: str,

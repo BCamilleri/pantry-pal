@@ -13,7 +13,9 @@ This project has:
 3. Create a '.env' file in the backend/ folder with the following lines:
     SECRET_KEY = "abc123"
     MEALDB_API_KEY = "65232507"
-4. Run the FastAPI server: 
+4. Make sure uvicorn is installed:
+    pip install uvicorn
+5. Run the FastAPI server: 
     uvicorn main:app --reload
 
 Server will be available at http://127.0.0.1:8000
