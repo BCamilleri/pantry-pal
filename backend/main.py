@@ -682,8 +682,8 @@ def calculate_dynamic_pmi_threshold(pmi: dict, ingredients: list) -> float:
     if not relevant_scores:
         return 0.0 # default threshold
     
-    # at least 0.3 and 25th percentile
-    return max(0.0, np.percentile(relevant_scores, 25))
+    # at least 0.3 and 60th percentile
+    return max(0.3, np.percentile(relevant_scores, 60))
 
 
 @app.post("/compatibility/")
@@ -693,7 +693,7 @@ def get_ingredient_compatibility(
     token: str = Depends(oauth2_scheme)
 ):
     MIN_CLIQUE_SIZE = 2
-    MAX_CLIQUE_SIZE = 15
+    MAX_CLIQUE_SIZE = 10
 
     # same filtering system as used in graph creation
     ingredients = ingredient_list.ingredients
@@ -761,8 +761,8 @@ def get_ingredient_compatibility(
     communities = list(community.greedy_modularity_communities(subgraph))
 
     results = []
-    for clique in communities:
-        if len(cliques) < MIN_CLIQUE_SIZE or len(cliques) > MAX_CLIQUE_SIZE:
+    for clique in cliques:
+        if len(clique) < MIN_CLIQUE_SIZE or len(clique) > MAX_CLIQUE_SIZE:
             continue
         total = 0
         count = 0
