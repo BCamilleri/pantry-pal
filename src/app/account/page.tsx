@@ -132,6 +132,40 @@ export default function AccountPage() {
         }));
     };
 
+    const handleDelete = async () => {
+        if (!window.confirm("Are you sure you want to delete your account? This action cannot be undone.")) {
+            return;
+        }
+        setLoading(true);
+        setMessage(null);
+
+        try {
+            const token = localStorage.getItem("token");
+            if (!token) throw new Error ("No auth token");
+
+            const response = await fetch(`${apiUrl}/users/${userId}`, {
+                method: 'DELETE',
+                headers: {
+                    Authorization: `Bearer ${token}`, 
+                },
+            });
+            
+            if (!response.ok) {
+                throw new Error("Failed to delete account");
+            }
+
+            // clear local storage and logout
+            localStorage.removeItem("token");
+            logout();
+            setMessage({text: 'Account deleted successfully', type: 'success'})
+        } catch (error) {
+            console.error("Error deleting account", error);
+            setMessage({text: error instanceof Error ? error.message : 'Failed to delete account', type: 'error'});
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
@@ -223,6 +257,15 @@ export default function AccountPage() {
                           className="px-4 py-2 bg-gradient-to-r from-orange-600 to-deepred text-white rounded hover:bg-gray-700"
                         >
                             {loading ? "Logging out..." : "Logout"}
+                        </button>
+                    </div>
+                    <div className='pt-4 border-t border-darkgrey'>
+                        <button
+                          onClick={handleDelete}
+                          disabled={loading}
+                          className='w-full px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-red-400'
+                        >
+                            {loading ? "Deleting..." : "Delete Account"}
                         </button>
                     </div>
                 </div>

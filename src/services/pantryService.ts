@@ -62,8 +62,6 @@ export const usePantryService = () => {
                     });
                     throw new Error(`Failed to add pantry item: ${errorText}`);
                 }
-
-
             }
 
         } catch (error) {

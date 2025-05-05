@@ -291,6 +291,57 @@ def update_user(
     
     return user
 
+@app.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    try:
+        # verify
+        token_data = decode_access_token(token)
+        if not token_data:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        if token_data.get("user_id") != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorised to delete this account"
+            )
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        db.query(Pantry).filter(Pantry.user_id == user_id).delete()
+        db.query(Comment).filter(Comment.user_id == user_id).update({
+            "text": "[deleted]",
+            "is_deleted": True
+        })
+
+        db.delete(user)
+        db.commit()
+
+        return {"message": "User account & associated data successfully deleted"}
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database integrity error during deletion"
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
 @app.post("/login/")
 def login(user: UserVerify, db: Session = Depends(get_db)):
     user_db = db.query(User).filter(User.username == user.username).first()
@@ -918,7 +969,7 @@ async def get_recipes_by_multiple_ingredients(
 ):
     cache_key = hashlib.md5(f"recipes_{ingredients}".encode()).hexdigest()
     
-    # first, redis cache handled by @cacge decorator
+    # first, redis cache handled by @cache decorator
     # then try database cache
     db_cache = db.query(RecipeCache).filter(
         RecipeCache.id == cache_key,
@@ -1278,7 +1329,13 @@ def soft_delete_comment(
         
         # verify user
         user = db.query(User).filter(User.id == user_data["user_id"]).first()
-        if db_comment.user != user_data["user_id"] and user.role != UserRole.ADMIN:
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        if db_comment.user_id != user_data["user_id"] and user.role != UserRole.ADMIN:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorised to delete this comment"
